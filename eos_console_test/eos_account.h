@@ -99,6 +99,8 @@ namespace eos
         /// IDが有効かどうか
         /// </summary>
         bool IsValid() const { return Account<AccountType>::IsValid(m_account_id); };
+
+        AccountType& Raw() { return m_account_id; }
     };
 
 } // namespace eos

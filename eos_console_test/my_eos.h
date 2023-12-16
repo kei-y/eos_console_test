@@ -8,16 +8,91 @@
 #include <eos_sdk.h>
 #include <eos_auth.h>
 #include <eos_lobby.h>
+#include <eos_p2p.h>
 #include "eos_error.h"
 #include "eos_handle.h"
 #include "eos_account.h"
 
 #include <iostream>
-#include <vector>
+#include <unordered_map>
+#include <unordered_set>
 #include <chrono>
 
 class EOS
 {
+public:
+    /// @brief 時間切れをチェックするためのクラス
+    class Timeout
+    {
+        int32_t                               m_ms  = 0;
+        std::chrono::system_clock::time_point m_old = std::chrono::system_clock::now();
+
+    public:
+        Timeout() {}
+        Timeout(int ms) { Reset(ms); }
+
+        static std::chrono::system_clock::time_point now() { return std::chrono::system_clock::now(); }
+
+        void Reset() { m_old = now(); }
+        void Reset(int ms)
+        {
+            m_ms = ms;
+
+            m_old = now();
+        }
+
+        bool IsTimeout() const
+        {
+            std::chrono::duration<double, std::milli> elapsed = now() - m_old;
+
+            return elapsed.count() > m_ms;
+        }
+    };
+    // 一定時間待機、Ctrl+Cで中断可能
+    static void WaitSignal(EOS& eos, int timeout = 0)
+    {
+        Timeout m_to(timeout);
+
+        // Ctrl+Cされるまで適当に待つ
+        auto close_handle = [](HANDLE h) { CloseHandle(h); };
+
+        static eos::Handle<HANDLE> g_sleep;
+
+        auto sigint_handler = [](DWORD control_type)
+        {
+            ReleaseSemaphore(g_sleep, 1, nullptr);
+            return TRUE;
+        };
+
+        SetConsoleCtrlHandler(sigint_handler, TRUE);
+
+        g_sleep.Initialize(CreateSemaphore(nullptr, 0, 1, nullptr), close_handle);
+
+        if (timeout)
+        {
+            puts(std::format("wait({}ms)(break ctrl+c)", timeout).c_str());
+        }
+        else
+        {
+            puts("wait(break ctrl+c)");
+        }
+
+        while (true)
+        {
+            if (WAIT_TIMEOUT != WaitForSingleObject(g_sleep, 100))
+            {
+                break;
+            }
+
+            if (timeout && m_to.IsTimeout())
+            {
+                break;
+            }
+
+            eos.Update();
+        }
+    }
+
 public:
     /// @brief 簡易の非同期完了待ちとデータの受け取りをするためのクラス
     template <typename T> class Async
@@ -46,14 +121,14 @@ public:
         {
             while (true)
             {
-                if (!m_eos.m_platform)
+                if (!m_eos.IsInitialized())
                 {
                     // エラー
                     return;
                 }
 
                 // eosの内部進行を進めるために呼び出す必要がある、本来は１フレームに一度程度呼び出すだけでよい
-                EOS_Platform_Tick(m_eos.m_platform);
+                m_eos.Update();
 
                 if (m_error.IsComplete())
                 {
@@ -70,6 +145,259 @@ public:
     {
     };
 
+    class P2P
+    {
+        EOS& m_eos;
+
+    public:
+        class Link
+        {
+            enum class STATE
+            {
+                INIT,
+                WAKEUP,
+                WAKEUP_ACK,
+                KEEPALIVE,
+            };
+
+            P2P&                                m_p2p;
+            eos::EpicAccount<EOS_ProductUserId> m_product_id;
+            STATE                               m_state = STATE::INIT;
+
+            Timeout m_interval;
+
+        public:
+            Link(P2P& p2p, EOS_ProductUserId id) : m_p2p(p2p), m_product_id(id), m_interval(100) {}
+
+            void Activate() { m_state = STATE::KEEPALIVE; }
+
+            void Update()
+            {
+                switch (m_state)
+                {
+                    case STATE::INIT:
+                        m_state = STATE::WAKEUP;
+                        break;
+                    case STATE::WAKEUP:
+                        // 接続できるまでブートコードを繰り返す
+                        // 中断する場合は、ここでタイムアウトしてロビーから切断する
+                        if (m_interval.IsTimeout())
+                        {
+                            m_interval.Reset(500);
+                            // m_state = STATE::KEEPALIVE;
+                            puts("STATE::WAKEUP1");
+
+                            m_p2p.Wake(m_product_id);
+                        }
+                        else
+                        {
+                            puts("STATE::WAKEUP2");
+                        }
+
+                        if (m_p2p.GetEstablished(m_product_id) > 0)
+                        {
+                            // 接続が確立したので、通信監視へ
+                            m_state = STATE::WAKEUP_ACK;
+                        }
+                        break;
+                    case STATE::WAKEUP_ACK:
+                        // 接続できるまでブートコードを繰り返す
+                        // 中断する場合は、ここでタイムアウトしてロビーから切断する
+                        if (m_interval.IsTimeout())
+                        {
+                            m_interval.Reset(500);
+                            // m_state = STATE::KEEPALIVE;
+                            puts("STATE::WAKEUP_ACK1");
+
+                            m_p2p.Wake(m_product_id, true);
+                        }
+                        else
+                        {
+                            puts("STATE::WAKEUP_ACK2");
+                        }
+
+                        if (m_p2p.GetEstablished(m_product_id) > 1)
+                        {
+                            // 接続が確立したので、通信監視へ
+                            m_state = STATE::KEEPALIVE;
+                        }
+                        break;
+                    case STATE::KEEPALIVE:
+                        // 必要な接続先と一定期間通信がない場合はここでタイムアウトしてロビーから切断する
+                        puts("STATE::KEEPALIVE");
+                        {
+                            // 一定時間ごとに通信をおこなっておく
+                            // 相手側は通信がこなくなって一定時間すると切断処理を行うようにする
+                            if (m_interval.IsTimeout())
+                            {
+                                m_interval.Reset(2000);
+
+                                Head head = {};
+
+                                // ここまでくればレベルが下がっても問題はないが、適当な値をいれておく
+                                head.established_level = 10;
+                                m_p2p.Send(m_product_id, &head, sizeof(head));
+                            }
+                        }
+                        break;
+                }
+            }
+        };
+
+    private:
+        /// @brief わかりやすく情報を付けるために固定構造体を先頭に貼り付ける
+        struct Head
+        {
+            char data[4] = {0};
+
+            char established_level = -1;
+        };
+
+        std::unordered_map<std::string, std::shared_ptr<Link>> m_links;
+        std::unordered_map<std::string, char>                  m_activates;
+
+        EOS_HP2P         m_p2p;
+        EOS_P2P_SocketId m_socket_id = {};
+
+        void UpdateReceive()
+        {
+            EOS_P2P_ReceivePacketOptions options = {};
+
+            options.ApiVersion       = EOS_P2P_RECEIVEPACKET_API_LATEST;
+            options.LocalUserId      = m_eos.m_local_user_id;
+            options.MaxDataSizeBytes = 4096;
+            options.RequestedChannel = nullptr;
+
+            EOS_P2P_SocketId socket_id;
+            socket_id.ApiVersion = EOS_P2P_SOCKETID_API_LATEST;
+
+            uint8_t channel = 0;
+
+            std::vector<char> data;
+            data.resize(options.MaxDataSizeBytes);
+            uint32_t BytesWritten = 0;
+
+            while (true)
+            {
+
+                EOS_ProductUserId received_id;
+
+                const auto r = EOS_P2P_ReceivePacket(
+                    m_p2p, &options, &received_id, &socket_id, &channel, data.data(), &BytesWritten);
+
+                if (r != EOS_EResult::EOS_Success)
+                {
+                    break;
+                }
+
+                const Head* head = (const Head*)data.data();
+
+                eos::EpicAccount<EOS_ProductUserId> remote_user_id(received_id);
+
+                // 毎回送るなどだいぶ手抜きだが、送られてきた接続状態で相手のP2P状況を保存し、リンクの方へ伝達できればなんでもよい
+                // 当然通信は前後する可能性もあるので、レベルが小さくならないようにしないといけない、などもある
+                m_activates[remote_user_id.ToString()] = head->established_level;
+
+                puts(std::format("received {}", BytesWritten).c_str());
+            }
+        }
+
+        /// @brief 指定IDとの接続が確立しているか
+        int GetEstablished(const eos::EpicAccount<EOS_ProductUserId>& id)
+        {
+            auto iter = m_activates.find(id.ToString());
+            if (m_activates.end() != iter)
+            {
+                return iter->second;
+            }
+            return -1;
+        }
+
+    public:
+        P2P(EOS& eos, const char* sockname) : m_eos(eos)
+        {
+            m_p2p = EOS_Platform_GetP2PInterface(m_eos.GetPlatform());
+
+            m_socket_id.ApiVersion = EOS_P2P_SOCKETID_API_LATEST;
+            strcpy_s(m_socket_id.SocketName, sockname);
+        }
+
+        void Wake(EOS_ProductUserId user_id, bool is_ack = false)
+        {
+            puts(__func__);
+
+            // 接続許可を出しておく
+            {
+                EOS_P2P_AcceptConnectionOptions options;
+                options.ApiVersion   = EOS_P2P_ACCEPTCONNECTION_API_LATEST;
+                options.LocalUserId  = m_eos.m_local_user_id;
+                options.RemoteUserId = user_id;
+
+                options.SocketId = &m_socket_id;
+
+                eos::Error r = EOS_P2P_AcceptConnection(m_p2p, &options);
+
+                assert(r.IsSuccess());
+            }
+
+            Head head = {};
+
+            head.established_level = is_ack ? 2 : 1;
+            Send(user_id, &head, sizeof(head), EOS_EPacketReliability::EOS_PR_ReliableUnordered);
+        }
+
+        void Send(EOS_ProductUserId      user_id,
+                  const void*            mem,
+                  uint32_t               len,
+                  EOS_EPacketReliability reliability = EOS_EPacketReliability::EOS_PR_UnreliableUnordered)
+        {
+            if (!m_eos.m_local_user_id.IsValid())
+            {
+                return;
+            }
+
+            {
+                EOS_P2P_SendPacketOptions options;
+
+                options.ApiVersion            = EOS_P2P_SENDPACKET_API_LATEST;
+                options.LocalUserId           = m_eos.m_local_user_id;
+                options.RemoteUserId          = user_id;
+                options.SocketId              = &m_socket_id;
+                options.bAllowDelayedDelivery = EOS_FALSE;
+                options.Channel               = 0;
+                options.Reliability           = reliability;
+
+                options.DataLengthBytes = len;
+                options.Data            = mem;
+
+                eos::Error r = EOS_P2P_SendPacket(m_p2p, &options);
+                assert(r.IsSuccess());
+            }
+        }
+
+        void OnJoined(EOS_ProductUserId id)
+        {
+            auto _id = eos::Account<EOS_ProductUserId>::ToString(id);
+
+            m_links[_id] = std::make_shared<Link>(*this, id);
+        }
+        void OnLeft(EOS_ProductUserId id)
+        {
+            assert(false);
+            m_links;
+        }
+
+        void Update()
+        {
+            UpdateReceive();
+
+            for (auto& l : m_links)
+            {
+                l.second->Update();
+            }
+        }
+    };
+
     /// @brief ロビーのIDを管理する
     class Lobby
     {
@@ -78,9 +406,41 @@ public:
         std::string m_id;
 
         EOS_NotificationId m_lobby_member_status_received = 0;
+        P2P                m_p2p;
 
     public:
-        Lobby(EOS& eos, EOS_LobbyId id) : m_eos(eos), m_id(id)
+        void OnLobbyMemberStatusReceivedCallbackInfo(const EOS_Lobby_LobbyMemberStatusReceivedCallbackInfo& data)
+        {
+            switch (data.CurrentStatus)
+            {
+                case EOS_ELobbyMemberStatus::EOS_LMS_CLOSED:
+                    puts("EOS_LMS_CLOSED");
+                    break;
+                case EOS_ELobbyMemberStatus::EOS_LMS_DISCONNECTED:
+                    puts("EOS_LMS_DISCONNECTED");
+                    break;
+                case EOS_ELobbyMemberStatus::EOS_LMS_JOINED:
+                    m_p2p.OnJoined(data.TargetUserId);
+                    puts("EOS_LMS_JOINED");
+                    break;
+                case EOS_ELobbyMemberStatus::EOS_LMS_KICKED:
+                    puts("EOS_LMS_KICKED");
+                    break;
+                case EOS_ELobbyMemberStatus::EOS_LMS_LEFT:
+                    puts("EOS_LMS_LEFT");
+                    m_p2p.OnLeft(data.TargetUserId);
+                    break;
+                case EOS_ELobbyMemberStatus::EOS_LMS_PROMOTED:
+                    puts("EOS_LMS_PROMOTED");
+                    break;
+                default:
+                    puts("error");
+                    break;
+            }
+        }
+
+    public:
+        Lobby(EOS& eos, EOS_LobbyId id) : m_eos(eos), m_id(id), m_p2p(eos, id)
         {
             auto lobby = EOS_Platform_GetLobbyInterface(m_eos.GetPlatform());
 
@@ -103,33 +463,58 @@ public:
                             // 自分のロビーではなかったので処理しない
                             return;
                         }
-
-                        switch (data->CurrentStatus)
-                        {
-                            case EOS_ELobbyMemberStatus::EOS_LMS_CLOSED:
-                                puts("EOS_LMS_CLOSED");
-                                break;
-                            case EOS_ELobbyMemberStatus::EOS_LMS_DISCONNECTED:
-                                puts("EOS_LMS_DISCONNECTED");
-                                break;
-                            case EOS_ELobbyMemberStatus::EOS_LMS_JOINED:
-                                puts("EOS_LMS_JOINED");
-                                break;
-                            case EOS_ELobbyMemberStatus::EOS_LMS_KICKED:
-                                puts("EOS_LMS_KICKED");
-                                break;
-                            case EOS_ELobbyMemberStatus::EOS_LMS_LEFT:
-                                puts("EOS_LMS_LEFT");
-                                break;
-                            case EOS_ELobbyMemberStatus::EOS_LMS_PROMOTED:
-                                puts("EOS_LMS_PROMOTED");
-                                break;
-                            default:
-                                puts("error");
-                                break;
-                        }
+                        lobby->OnLobbyMemberStatusReceivedCallbackInfo(*data);
                     });
                 m_lobby_member_status_received = h;
+            }
+
+            {
+                auto GetDetails = [](EOS_HLobby lobby, EOS_LobbyId id, EOS_ProductUserId local_id)
+                {
+                    EOS_Lobby_CopyLobbyDetailsHandleOptions options;
+                    options.ApiVersion  = EOS_LOBBY_COPYLOBBYDETAILSHANDLE_API_LATEST;
+                    options.LobbyId     = id;
+                    options.LocalUserId = local_id;
+
+                    EOS_HLobbyDetails details;
+
+                    eos::Error r = EOS_Lobby_CopyLobbyDetailsHandle(lobby, &options, &details);
+                    assert(r.IsSuccess());
+
+                    return eos::Handle<EOS_LobbyDetailsHandle*>(details, EOS_LobbyDetails_Release);
+                };
+
+                auto details = GetDetails(lobby, id, m_eos.m_local_user_id);
+
+                auto GetMemberCount = [](eos::Handle<EOS_LobbyDetailsHandle*> details)
+                {
+                    EOS_LobbyDetails_GetMemberCountOptions count_options;
+                    count_options.ApiVersion = EOS_LOBBYDETAILS_GETMEMBERCOUNT_API_LATEST;
+
+                    return EOS_LobbyDetails_GetMemberCount(details, &count_options);
+                };
+                auto GetMemberId = [](eos::Handle<EOS_LobbyDetailsHandle*> details, uint32_t index)
+                {
+                    EOS_LobbyDetails_GetMemberByIndexOptions options;
+                    options.ApiVersion  = EOS_LOBBYDETAILS_GETMEMBERBYINDEX_API_LATEST;
+                    options.MemberIndex = index;
+
+                    return eos::EpicAccount<EOS_ProductUserId>(EOS_LobbyDetails_GetMemberByIndex(details, &options));
+                };
+
+                // 初期からいるものを参加済みに登録する
+                for (uint32_t i = 0; i < GetMemberCount(details); i++)
+                {
+                    auto member_id = GetMemberId(details, i);
+
+                    // 自分はリンクには登録しないようにする
+                    if (member_id == m_eos.m_local_user_id)
+                    {
+                        continue;
+                    }
+
+                    m_p2p.OnJoined(member_id);
+                }
             }
         }
         ~Lobby()
@@ -139,6 +524,8 @@ public:
         }
 
         EOS_LobbyId GetId() const { return m_id.c_str(); };
+
+        void Update() { m_p2p.Update(); }
     };
 
     class Search
@@ -260,10 +647,26 @@ public:
 
         const char* GetName() const { return m_attr->Data->Key; }
 
-        int64_t     AsInt64() const { return (*m_attr)->Data->Value.AsInt64; }
-        double      AsDouble() const { return (*m_attr)->Data->Value.AsDouble; }
-        bool        AsBool() const { return (*m_attr)->Data->Value.AsBool == EOS_TRUE; }
-        const char* AsUtf8() const { return (*m_attr)->Data->Value.AsUtf8; }
+        int64_t AsInt64() const
+        {
+            assert(GetType() == EOS_ELobbyAttributeType::EOS_AT_INT64);
+            return m_attr->Data->Value.AsInt64;
+        }
+        double AsDouble() const
+        {
+            assert(GetType() == EOS_ELobbyAttributeType::EOS_AT_DOUBLE);
+            return m_attr->Data->Value.AsDouble;
+        }
+        bool AsBool() const
+        {
+            assert(GetType() == EOS_ELobbyAttributeType::EOS_AT_BOOLEAN);
+            return m_attr->Data->Value.AsBool == EOS_TRUE;
+        }
+        const char* AsUtf8() const
+        {
+            assert(GetType() == EOS_ELobbyAttributeType::EOS_AT_STRING);
+            return m_attr->Data->Value.AsUtf8;
+        }
 
         std::string Dump() const
         {
@@ -294,6 +697,8 @@ private:
     bool                         m_is_initialized = false;
 
     eos::EpicAccount<EOS_ProductUserId> m_local_user_id;
+
+    std::list<std::weak_ptr<Lobby>> m_lobbies;
 
 private:
 #pragma region utility
@@ -647,7 +1052,9 @@ public:
         async.Wait();
         assert(async.GetError().IsSuccess());
 
-        return std::make_shared<Lobby>(*this, async.GetStorage().c_str());
+        auto p = std::make_shared<Lobby>(*this, async.GetStorage().c_str());
+        m_lobbies.push_back(p);
+        return p;
     }
 
     /// @brief ロビーへ参加する
@@ -684,7 +1091,9 @@ public:
         async.Wait();
         assert(async.GetError().IsSuccess());
 
-        return std::make_shared<Lobby>(*this, async.GetStorage().c_str());
+        auto p = std::make_shared<Lobby>(*this, async.GetStorage().c_str());
+        m_lobbies.push_back(p);
+        return p;
     }
 
     /// @brief ロビーから抜ける
@@ -889,6 +1298,21 @@ public:
         a.Key        = key;
         a.ValueType  = t;
         return a;
+    }
+
+    bool IsInitialized() const { return m_is_initialized; }
+
+    // eosの内部進行を進めるために呼び出す必要がある、本来は１フレームに一度程度呼び出すだけでよい
+    void Update()
+    {
+        EOS_Platform_Tick(m_platform);
+        for (auto& l : m_lobbies)
+        {
+            if (auto p = l.lock())
+            {
+                p->Update();
+            }
+        }
     }
 
 private:

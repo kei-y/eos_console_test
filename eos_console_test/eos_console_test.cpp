@@ -9,35 +9,6 @@
 
 #pragma comment(lib, "EOSSDK-Win64-Shipping.lib")
 
-void WaitSignal(EOS& eos)
-{
-    // Ctrl+Cされるまで適当に待つ
-    auto close_handle = [](HANDLE h) { CloseHandle(h); };
-
-    static eos::Handle<HANDLE> g_sleep;
-
-    auto sigint_handler = [](DWORD control_type)
-    {
-        ReleaseSemaphore(g_sleep, 1, nullptr);
-        return TRUE;
-    };
-
-    SetConsoleCtrlHandler(sigint_handler, TRUE);
-
-    g_sleep.Initialize(CreateSemaphore(nullptr, 0, 1, nullptr), close_handle);
-
-    puts("wait(break ctrl+c)");
-
-    while (true)
-    {
-        if (WAIT_TIMEOUT != WaitForSingleObject(g_sleep, 100))
-        {
-            break;
-        }
-        EOS_Platform_Tick(eos.GetPlatform());
-    }
-}
-
 int main(int argc, const char* argv[])
 {
     EOS eos;
@@ -61,7 +32,7 @@ int main(int argc, const char* argv[])
     }
 
     // Ctrl+Cされるまで適当に待つ
-    WaitSignal(eos);
+    EOS::WaitSignal(eos);
 
     for (auto l : lobbies)
     {
