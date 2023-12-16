@@ -1,12 +1,44 @@
 ﻿// eos_console_test.cpp
 //
+#define NOMINMAX
 
 #include "../credentials.h"
+
+#define AUTH_CREDENTIALS_TOKEN "HOSTING"
 #include "my_eos.h"
 
 #pragma comment(lib, "EOSSDK-Win64-Shipping.lib")
 
-int main()
+void WaitSignal(EOS& eos)
+{
+    // Ctrl+Cされるまで適当に待つ
+    auto close_handle = [](HANDLE h) { CloseHandle(h); };
+
+    static eos::Handle<HANDLE> g_sleep;
+
+    auto sigint_handler = [](DWORD control_type)
+    {
+        ReleaseSemaphore(g_sleep, 1, nullptr);
+        return TRUE;
+    };
+
+    SetConsoleCtrlHandler(sigint_handler, TRUE);
+
+    g_sleep.Initialize(CreateSemaphore(nullptr, 0, 1, nullptr), close_handle);
+
+    puts("wait(break ctrl+c)");
+
+    while (true)
+    {
+        if (WAIT_TIMEOUT != WaitForSingleObject(g_sleep, 100))
+        {
+            break;
+        }
+        EOS_Platform_Tick(eos.GetPlatform());
+    }
+}
+
+int main(int argc, const char* argv[])
 {
     EOS eos;
 
@@ -21,41 +53,15 @@ int main()
     std::vector<std::shared_ptr<EOS::Lobby>> lobbies;
 
     // ロビーを数個作成する
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 1; i++)
     {
         auto lobby = eos.LobbyCreate();
         eos.LobbySetAttributes(lobby, i, 1);
         lobbies.push_back(lobby);
     }
 
-    // 反映されるまで少し時間がかかるようなので適当に待機します
-    puts("wait");
-    ::Sleep(10 * 1000);
-
-    // 属性"test"が1のものを探す
-    puts("search 1");
-    {
-        auto search = eos.LobbySearchCreate(5);
-
-        EOS_Lobby_AttributeData attr;
-        search->AddParameter(EOS::MakeAttribute(attr, "test", 1), EOS_EComparisonOp::EOS_CO_EQUAL);
-        eos.LobbySearchExecute(search);
-
-        eos.LobbySearchDump(search);
-    }
-
-    // 属性"test"が2以上、４未満のものを探す
-    puts("search 2");
-    {
-        auto search = eos.LobbySearchCreate(5);
-
-        EOS_Lobby_AttributeData attr;
-        search->AddParameter(EOS::MakeAttribute(attr, "number", 2), EOS_EComparisonOp::EOS_CO_GREATERTHANOREQUAL);
-        search->AddParameter(EOS::MakeAttribute(attr, "number", 4), EOS_EComparisonOp::EOS_CO_LESSTHAN);
-        eos.LobbySearchExecute(search);
-
-        eos.LobbySearchDump(search);
-    }
+    // Ctrl+Cされるまで適当に待つ
+    WaitSignal(eos);
 
     for (auto l : lobbies)
     {

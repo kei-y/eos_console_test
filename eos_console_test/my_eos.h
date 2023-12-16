@@ -14,6 +14,7 @@
 
 #include <iostream>
 #include <vector>
+#include <chrono>
 
 class EOS
 {
@@ -70,21 +71,86 @@ public:
     };
 
     /// @brief ロビーのIDを管理する
-    struct Lobby
+    class Lobby
     {
+        EOS& m_eos;
+
         std::string m_id;
 
-        Lobby(EOS_LobbyId id) : m_id(id) {}
+        EOS_NotificationId m_lobby_member_status_received = 0;
+
+    public:
+        Lobby(EOS& eos, EOS_LobbyId id) : m_eos(eos), m_id(id)
+        {
+            auto lobby = EOS_Platform_GetLobbyInterface(m_eos.GetPlatform());
+
+            // メンバーの状態が変化した際に呼び出される
+            // このコードのように、ロビーごとに作るのではなく、
+            // ロビー全体でひとつだけ登録し、選別後個別のロビーへ渡すような仕組みの方が望ましい
+            {
+                EOS_Lobby_AddNotifyLobbyMemberStatusReceivedOptions options;
+                options.ApiVersion = EOS_LOBBY_ADDNOTIFYLOBBYMEMBERSTATUSRECEIVED_API_LATEST;
+
+                auto h = EOS_Lobby_AddNotifyLobbyMemberStatusReceived(
+                    lobby,
+                    &options,
+                    this,
+                    [](const EOS_Lobby_LobbyMemberStatusReceivedCallbackInfo* data)
+                    {
+                        Lobby* lobby = (Lobby*)data->ClientData;
+                        if (0 != strcmp(lobby->GetId(), data->LobbyId))
+                        {
+                            // 自分のロビーではなかったので処理しない
+                            return;
+                        }
+
+                        switch (data->CurrentStatus)
+                        {
+                            case EOS_ELobbyMemberStatus::EOS_LMS_CLOSED:
+                                puts("EOS_LMS_CLOSED");
+                                break;
+                            case EOS_ELobbyMemberStatus::EOS_LMS_DISCONNECTED:
+                                puts("EOS_LMS_DISCONNECTED");
+                                break;
+                            case EOS_ELobbyMemberStatus::EOS_LMS_JOINED:
+                                puts("EOS_LMS_JOINED");
+                                break;
+                            case EOS_ELobbyMemberStatus::EOS_LMS_KICKED:
+                                puts("EOS_LMS_KICKED");
+                                break;
+                            case EOS_ELobbyMemberStatus::EOS_LMS_LEFT:
+                                puts("EOS_LMS_LEFT");
+                                break;
+                            case EOS_ELobbyMemberStatus::EOS_LMS_PROMOTED:
+                                puts("EOS_LMS_PROMOTED");
+                                break;
+                            default:
+                                puts("error");
+                                break;
+                        }
+                    });
+                m_lobby_member_status_received = h;
+            }
+        }
+        ~Lobby()
+        {
+            auto lobby = EOS_Platform_GetLobbyInterface(m_eos.GetPlatform());
+            EOS_Lobby_RemoveNotifyLobbyMemberStatusReceived(lobby, m_lobby_member_status_received);
+        }
+
+        EOS_LobbyId GetId() const { return m_id.c_str(); };
     };
 
     class Search
     {
+        EOS& m_eos;
+
     public:
         eos::Handle<EOS_HLobbySearch> m_search_handle;
 
     public:
-        Search(EOS_HLobbySearch search_handle)
-            : m_search_handle(eos::Handle<EOS_HLobbySearch>(search_handle, EOS_LobbySearch_Release))
+        Search(EOS& eos, EOS_HLobbySearch search_handle)
+            : m_eos(eos), m_search_handle(eos::Handle<EOS_HLobbySearch>(search_handle, EOS_LobbySearch_Release))
         {
         }
 
@@ -98,6 +164,79 @@ public:
 
             const eos::Error r = EOS_LobbySearch_SetParameter(*m_search_handle, &options);
             assert(r.IsSuccess());
+        }
+
+        //// 以下結果のメソッド
+
+        /// @brief 結果の個数を取得する
+        uint32_t GetSearchResultCount()
+        {
+            EOS_LobbySearch_GetSearchResultCountOptions options;
+            options.ApiVersion = EOS_LOBBYSEARCH_GETSEARCHRESULTCOUNT_API_LATEST;
+
+            return EOS_LobbySearch_GetSearchResultCount(*m_search_handle, &options);
+        };
+
+        /// @brief 指定したインデクスのディティールハンドルを取得する
+        /// @param index ディティールハンドルを取得したいインデクス
+        /// @param details_handle ここに戻される
+        eos::Error GetDetail(uint32_t index, eos::Handle<EOS_HLobbyDetails>& details_handle)
+        {
+            EOS_LobbySearch_CopySearchResultByIndexOptions options;
+            options.ApiVersion = EOS_LOBBYSEARCH_COPYSEARCHRESULTBYINDEX_API_LATEST;
+            options.LobbyIndex = index;
+            EOS_HLobbyDetails _details_handle;
+            const eos::Error  e = EOS_LobbySearch_CopySearchResultByIndex(m_search_handle, &options, &_details_handle);
+            assert(e.IsSuccess());
+
+            details_handle.Initialize(_details_handle, EOS_LobbyDetails_Release);
+
+            return e;
+        };
+
+        /// @brief 検索結果を取り出しコンソールに出力する
+        void ResultDump()
+        {
+            auto Details_GetAttributeCount = [](eos::Handle<EOS_HLobbyDetails> details)
+            {
+                EOS_LobbyDetails_GetAttributeCountOptions count_options = {};
+
+                count_options.ApiVersion = EOS_LOBBYDETAILS_GETATTRIBUTECOUNT_API_LATEST;
+                return EOS_LobbyDetails_GetAttributeCount(details, &count_options);
+            };
+
+            auto Details_GetAttribute = [](eos::Handle<EOS_HLobbyDetails> details, uint32_t index, LobbyAttribute& attr)
+            {
+                EOS_Lobby_Attribute* _attr;
+
+                EOS_LobbyDetails_CopyAttributeByIndexOptions options;
+                options.ApiVersion = EOS_LOBBYDETAILS_COPYATTRIBUTEBYINDEX_API_LATEST;
+                options.AttrIndex  = index;
+                const eos::Error e = EOS_LobbyDetails_CopyAttributeByIndex(details, &options, &_attr);
+                assert(e.IsSuccess());
+
+                attr.Initialize(_attr);
+            };
+
+            auto count = GetSearchResultCount();
+            for (uint32_t i = 0; i < count; i++)
+            {
+                eos::Handle<EOS_HLobbyDetails> details;
+
+                GetDetail(i, details);
+
+                puts(std::format("index:{}[", i).c_str());
+                LobbyAttribute attr;
+
+                for (uint32_t attr_index = 0; attr_index < Details_GetAttributeCount(details); attr_index++)
+                {
+                    Details_GetAttribute(details, attr_index, attr);
+
+                    auto s = std::format(" {} {}", attr.GetName(), attr.Dump());
+                    puts(s.c_str());
+                }
+                puts("]");
+            }
         }
     };
 
@@ -317,11 +456,20 @@ public:
 
         auth_credentials.ApiVersion = EOS_AUTH_CREDENTIALS_API_LATEST;
 
-        // 利用したい認証を取得する
-        auth_credentials.Type = GetCredentialType();
-
-        switch (auth_credentials.Type)
+        if (IsDebuggerPresent())
         {
+            auth_credentials.Type = EOS_ELoginCredentialType::EOS_LCT_Developer;
+
+            auth_credentials.Id    = "localhost:8080";
+            auth_credentials.Token = AUTH_CREDENTIALS_TOKEN;
+        }
+        else
+        {
+            // 利用したい認証を取得する
+            auth_credentials.Type = GetCredentialType();
+
+            switch (auth_credentials.Type)
+            {
 #if 0 // 二段階認証が必須になったので、開発アカウントではEOS_LCT_Passwordは事実上動作しない気がします
             case EOS_ELoginCredentialType::EOS_LCT_Password:
                 assert(false);
@@ -333,19 +481,19 @@ public:
                 auth_credentials.Token = _auth_token.c_str();
                 break;
 #endif
-            case EOS_ELoginCredentialType::EOS_LCT_Developer:
-                _auth_id = input("DevAuthToolに表示されているIPアドレスとポートを入力してください");
-                _auth_token = input("DevNameを入力してください");
+                case EOS_ELoginCredentialType::EOS_LCT_Developer:
+                    _auth_id = input("DevAuthToolに表示されているIPアドレスとポートを入力してください");
+                    _auth_token = input("DevNameを入力してください");
 
-                auth_credentials.Id    = _auth_id.c_str();
-                auth_credentials.Token = _auth_token.c_str();
-                break;
-            case EOS_ELoginCredentialType::EOS_LCT_AccountPortal:
-                break;
-            default:
-                return eos::Handle<EOS_Auth_Token*>();
+                    auth_credentials.Id    = _auth_id.c_str();
+                    auth_credentials.Token = _auth_token.c_str();
+                    break;
+                case EOS_ELoginCredentialType::EOS_LCT_AccountPortal:
+                    break;
+                default:
+                    return eos::Handle<EOS_Auth_Token*>();
+            }
         }
-
         // ログインを行い認証情報を得る
 
         {
@@ -499,7 +647,44 @@ public:
         async.Wait();
         assert(async.GetError().IsSuccess());
 
-        return std::make_shared<Lobby>(async.GetStorage().c_str());
+        return std::make_shared<Lobby>(*this, async.GetStorage().c_str());
+    }
+
+    /// @brief ロビーへ参加する
+    std::shared_ptr<Lobby> LobbyJoin(eos::Handle<EOS_HLobbyDetails> to_join)
+    {
+        puts(__func__);
+
+        auto lobby = EOS_Platform_GetLobbyInterface(m_platform);
+
+        EOS_Lobby_JoinLobbyOptions options = {};
+
+        options.ApiVersion         = EOS_LOBBY_JOINLOBBY_API_LATEST;
+        options.bPresenceEnabled   = EOS_FALSE;
+        options.LocalUserId        = m_local_user_id;
+        options.LobbyDetailsHandle = to_join;
+
+        Async<std::string> async(*this);
+
+        EOS_Lobby_JoinLobby(lobby,
+                            &options,
+                            &async,
+                            [](const EOS_Lobby_JoinLobbyCallbackInfo* data)
+                            {
+                                if (!EOS_EResult_IsOperationComplete(data->ResultCode))
+                                    return;
+                                auto a = (Async<std::string>*)data->ClientData;
+
+                                if (data->ResultCode == EOS_EResult::EOS_Success)
+                                    a->SetStorage(eos::Error(data->ResultCode), data->LobbyId);
+                                else
+                                    a->SetStorage(eos::Error(data->ResultCode), "");
+                            });
+
+        async.Wait();
+        assert(async.GetError().IsSuccess());
+
+        return std::make_shared<Lobby>(*this, async.GetStorage().c_str());
     }
 
     /// @brief ロビーから抜ける
@@ -513,7 +698,7 @@ public:
 
         EOS_Lobby_LeaveLobbyOptions options;
         options.ApiVersion  = EOS_LOBBY_LEAVELOBBY_API_LATEST;
-        options.LobbyId     = p->m_id.c_str();
+        options.LobbyId     = p->GetId();
         options.LocalUserId = m_local_user_id;
         EOS_Lobby_LeaveLobby(lobby,
                              &options,
@@ -539,7 +724,7 @@ public:
 
         EOS_Lobby_DestroyLobbyOptions options;
         options.ApiVersion  = EOS_LOBBY_DESTROYLOBBY_API_LATEST;
-        options.LobbyId     = p->m_id.c_str();
+        options.LobbyId     = p->GetId();
         options.LocalUserId = m_local_user_id;
         EOS_Lobby_DestroyLobby(lobby,
                                &options,
@@ -570,7 +755,7 @@ public:
             EOS_Lobby_UpdateLobbyModificationOptions options = {};
 
             options.ApiVersion  = EOS_LOBBY_UPDATELOBBYMODIFICATION_API_LATEST;
-            options.LobbyId     = p->m_id.c_str();
+            options.LobbyId     = p->GetId();
             options.LocalUserId = m_local_user_id;
 
             const eos::Error e = EOS_Lobby_UpdateLobbyModification(lobby, &options, &_modification);
@@ -593,13 +778,13 @@ public:
 
         EOS_Lobby_AttributeData attr;
 
+        AddAttribute(modification, MakeAttribute(attr, "test", (int64_t)1));
+
         // 属性を適当に設定
-        AddAttribute(modification, MakeAttribute(attr, "boolean", true));
-        AddAttribute(modification, MakeAttribute(attr, "double_val", 11.2));
-        AddAttribute(modification, MakeAttribute(attr, "str", "abcde"));
-        AddAttribute(modification, MakeAttribute(attr, "test", test_value));
-        AddAttribute(modification, MakeAttribute(attr, "number", number));
-        AddAttribute(modification, MakeAttribute(attr, "id", m_local_user_id.ToString().c_str()));
+        auto tm      = std::chrono::system_clock::now();
+        auto tp_msec = std::chrono::duration_cast<std::chrono::milliseconds>(tm.time_since_epoch());
+
+        AddAttribute(modification, MakeAttribute(attr, "now", (int64_t)tp_msec.count()));
 
         // サーバー側へ登録を行う
         {
@@ -641,7 +826,7 @@ public:
         const eos::Error r = EOS_Lobby_CreateLobbySearch(lobby, &options, &search_handle);
         assert(r.IsSuccess());
 
-        return std::make_shared<Search>(search_handle);
+        return std::make_shared<Search>(*this, search_handle);
     }
 
     /// @brief ロビー検索を実行する
@@ -676,74 +861,7 @@ public:
         assert(async.GetError().IsSuccess());
     }
 
-    /// @brief 検索結果を取り出しコンソールに出力する
-    void LobbySearchDump(std::shared_ptr<Search> p)
-    {
-        auto GetSearchResultCount = [](eos::Handle<EOS_HLobbySearch> search_handle)
-        {
-            EOS_LobbySearch_GetSearchResultCountOptions options;
-            options.ApiVersion = EOS_LOBBYSEARCH_GETSEARCHRESULTCOUNT_API_LATEST;
-
-            return EOS_LobbySearch_GetSearchResultCount(*search_handle, &options);
-        };
-
-        auto GetDetail = [](eos::Handle<EOS_HLobbySearch>   search_handle,
-                            uint32_t                        index,
-                            eos::Handle<EOS_HLobbyDetails>& details_handle)
-        {
-            EOS_LobbySearch_CopySearchResultByIndexOptions options;
-            options.ApiVersion = EOS_LOBBYSEARCH_COPYSEARCHRESULTBYINDEX_API_LATEST;
-            options.LobbyIndex = index;
-            EOS_HLobbyDetails _details_handle;
-            const eos::Error  e = EOS_LobbySearch_CopySearchResultByIndex(search_handle, &options, &_details_handle);
-            assert(e.IsSuccess());
-
-            details_handle.Initialize(_details_handle, EOS_LobbyDetails_Release);
-        };
-
-        auto Details_GetAttributeCount = [](eos::Handle<EOS_HLobbyDetails> details)
-        {
-            EOS_LobbyDetails_GetAttributeCountOptions count_options = {};
-
-            count_options.ApiVersion = EOS_LOBBYDETAILS_GETATTRIBUTECOUNT_API_LATEST;
-            return EOS_LobbyDetails_GetAttributeCount(details, &count_options);
-        };
-
-        auto Details_GetAttribute = [](eos::Handle<EOS_HLobbyDetails> details, uint32_t index, LobbyAttribute& attr)
-        {
-            EOS_Lobby_Attribute* _attr;
-
-            EOS_LobbyDetails_CopyAttributeByIndexOptions options;
-            options.ApiVersion = EOS_LOBBYDETAILS_COPYATTRIBUTEBYINDEX_API_LATEST;
-            options.AttrIndex  = index;
-            const eos::Error e = EOS_LobbyDetails_CopyAttributeByIndex(details, &options, &_attr);
-            assert(e.IsSuccess());
-
-            attr.Initialize(_attr);
-        };
-
-        auto count = GetSearchResultCount(p->m_search_handle);
-        for (uint32_t i = 0; i < count; i++)
-        {
-            eos::Handle<EOS_HLobbyDetails> details;
-
-            GetDetail(p->m_search_handle, i, details);
-
-            puts(std::format("index:{}[", i).c_str());
-            LobbyAttribute attr;
-
-            for (uint32_t attr_index = 0; attr_index < Details_GetAttributeCount(details); attr_index++)
-            {
-                Details_GetAttribute(details, attr_index, attr);
-
-                auto s = std::format(" {} {}", attr.GetName(), attr.Dump());
-                puts(s.c_str());
-            }
-            puts("]");
-        }
-    }
-
-    static EOS_Lobby_AttributeData& MakeAttribute(EOS_Lobby_AttributeData& a, const char* key, int32_t v)
+    static EOS_Lobby_AttributeData& MakeAttribute(EOS_Lobby_AttributeData& a, const char* key, int64_t v)
     {
         internal_MakeAttribute(a, key, EOS_ELobbyAttributeType::EOS_AT_INT64).Value.AsInt64 = v;
         return a;
