@@ -33,11 +33,14 @@ public:
 
         static std::chrono::system_clock::time_point now() { return std::chrono::system_clock::now(); }
 
+        /// @brief 初回でIsTimeoutにされるようなリセットを行う
+        void InitialReset() { m_old = now() - std::chrono::milliseconds(m_ms); }
+
+        /// @brief
         void Reset() { m_old = now(); }
         void Reset(int ms)
         {
-            m_ms = ms;
-
+            m_ms  = ms;
             m_old = now();
         }
 
@@ -177,6 +180,7 @@ public:
                 {
                     case STATE::INIT:
                         m_state = STATE::WAKEUP;
+                        m_interval.InitialReset();
                         break;
                     case STATE::WAKEUP:
                         // 接続できるまでブートコードを繰り返す
@@ -184,21 +188,18 @@ public:
                         if (m_interval.IsTimeout())
                         {
                             m_interval.Reset(500);
-                            // m_state = STATE::KEEPALIVE;
-                            puts("STATE::WAKEUP1");
+                            puts("STATE::WAKEUP");
 
                             m_p2p.Wake(m_product_id);
-                        }
-                        else
-                        {
-                            puts("STATE::WAKEUP2");
+
+                            if (m_p2p.GetEstablished(m_product_id) > 0)
+                            {
+                                // 接続が確立したので、通信監視へ
+                                m_state = STATE::WAKEUP_ACK;
+                                m_interval.InitialReset();
+                            }
                         }
 
-                        if (m_p2p.GetEstablished(m_product_id) > 0)
-                        {
-                            // 接続が確立したので、通信監視へ
-                            m_state = STATE::WAKEUP_ACK;
-                        }
                         break;
                     case STATE::WAKEUP_ACK:
                         // 接続できるまでブートコードを繰り返す
@@ -206,38 +207,33 @@ public:
                         if (m_interval.IsTimeout())
                         {
                             m_interval.Reset(500);
-                            // m_state = STATE::KEEPALIVE;
-                            puts("STATE::WAKEUP_ACK1");
+                            puts("STATE::WAKEUP_ACK");
 
                             m_p2p.Wake(m_product_id, true);
-                        }
-                        else
-                        {
-                            puts("STATE::WAKEUP_ACK2");
-                        }
 
-                        if (m_p2p.GetEstablished(m_product_id) > 1)
-                        {
-                            // 接続が確立したので、通信監視へ
-                            m_state = STATE::KEEPALIVE;
+                            if (m_p2p.GetEstablished(m_product_id) > 1)
+                            {
+                                // 接続が確立したので、通信監視へ
+                                m_state = STATE::KEEPALIVE;
+                                m_interval.InitialReset();
+                            }
                         }
                         break;
                     case STATE::KEEPALIVE:
-                        // 必要な接続先と一定期間通信がない場合はここでタイムアウトしてロビーから切断する
-                        puts("STATE::KEEPALIVE");
+                        // 一定時間ごとに通信をおこなっておく
+                        // 相手側は通信がこなくなって一定時間すると切断処理を行うようにする
+                        if (m_interval.IsTimeout())
                         {
-                            // 一定時間ごとに通信をおこなっておく
-                            // 相手側は通信がこなくなって一定時間すると切断処理を行うようにする
-                            if (m_interval.IsTimeout())
-                            {
-                                m_interval.Reset(2000);
+                            puts("STATE::KEEPALIVE");
 
-                                Head head = {};
+                            m_interval.Reset(2000);
 
-                                // ここまでくればレベルが下がっても問題はないが、適当な値をいれておく
-                                head.established_level = 10;
-                                m_p2p.Send(m_product_id, &head, sizeof(head));
-                            }
+                            Head head = {};
+
+                            // ここまでくればレベルが下がっても問題はないし、
+                            // そもそも送る意味がないけれど、良い感じの実装もないのでてきとうにやっておく
+                            head.established_level = 10;
+                            m_p2p.Send(m_product_id, &head, sizeof(head));
                         }
                         break;
                 }
@@ -256,11 +252,15 @@ public:
         std::unordered_map<std::string, std::shared_ptr<Link>> m_links;
         std::unordered_map<std::string, char>                  m_activates;
 
+        std::unordered_map<std::string, std::vector<char>> m_received;
+
         EOS_HP2P         m_p2p;
         EOS_P2P_SocketId m_socket_id = {};
 
+        /// @brief 受信処理
         void UpdateReceive()
         {
+            // 受信の準備を行う
             EOS_P2P_ReceivePacketOptions options = {};
 
             options.ApiVersion       = EOS_P2P_RECEIVEPACKET_API_LATEST;
@@ -275,20 +275,23 @@ public:
 
             std::vector<char> data;
             data.resize(options.MaxDataSizeBytes);
-            uint32_t BytesWritten = 0;
+            uint32_t byte_written = 0;
 
             while (true)
             {
-
                 EOS_ProductUserId received_id;
 
                 const auto r = EOS_P2P_ReceivePacket(
-                    m_p2p, &options, &received_id, &socket_id, &channel, data.data(), &BytesWritten);
+                    m_p2p, &options, &received_id, &socket_id, &channel, data.data(), &byte_written);
 
-                if (r != EOS_EResult::EOS_Success)
+                if (r == EOS_EResult::EOS_NotFound)
                 {
                     break;
                 }
+                assert(r == EOS_EResult::EOS_Success);
+
+                // Wake用の情報を片付ける
+                // established_levelでwakeの進行状態を進行管理する
 
                 const Head* head = (const Head*)data.data();
 
@@ -298,7 +301,12 @@ public:
                 // 当然通信は前後する可能性もあるので、レベルが小さくならないようにしないといけない、などもある
                 m_activates[remote_user_id.ToString()] = head->established_level;
 
-                puts(std::format("received {}", BytesWritten).c_str());
+                // 適当に格納しておく
+                auto& receiver = m_received[remote_user_id.ToString()];
+                receiver.resize(byte_written);
+                memcpy(receiver.data(), data.data(), byte_written);
+
+                puts(std::format("received {}", byte_written).c_str());
             }
         }
 
@@ -322,6 +330,9 @@ public:
             strcpy_s(m_socket_id.SocketName, sockname);
         }
 
+        /// @brief 初回接続確立までのダミーパケット
+        /// @param user_id 送信先
+        /// @param is_ack 最初はfalse、trueには相手からの応答があった後に切り替える
         void Wake(EOS_ProductUserId user_id, bool is_ack = false)
         {
             puts(__func__);
@@ -346,6 +357,8 @@ public:
             Send(user_id, &head, sizeof(head), EOS_EPacketReliability::EOS_PR_ReliableUnordered);
         }
 
+        /// @brief user_id に対してパケットを送信する
+        /// @param user_id 送信先ID
         void Send(EOS_ProductUserId      user_id,
                   const void*            mem,
                   uint32_t               len,
@@ -377,19 +390,22 @@ public:
 
         void OnJoined(EOS_ProductUserId id)
         {
-            auto _id = eos::Account<EOS_ProductUserId>::ToString(id);
+            const auto _id = eos::Account<EOS_ProductUserId>::ToString(id);
 
             m_links[_id] = std::make_shared<Link>(*this, id);
         }
         void OnLeft(EOS_ProductUserId id)
         {
-            assert(false);
-            m_links;
+            const auto _id = eos::Account<EOS_ProductUserId>::ToString(id);
+            m_links.erase(_id);
         }
 
         void Update()
         {
             UpdateReceive();
+
+            // 受け取り済みのパケット情報を良い感じに必要な人に届ける、届けたらクリアしておく
+            m_received.clear();
 
             for (auto& l : m_links)
             {
@@ -418,6 +434,7 @@ public:
                     break;
                 case EOS_ELobbyMemberStatus::EOS_LMS_DISCONNECTED:
                     puts("EOS_LMS_DISCONNECTED");
+                    m_p2p.OnLeft(data.TargetUserId);
                     break;
                 case EOS_ELobbyMemberStatus::EOS_LMS_JOINED:
                     m_p2p.OnJoined(data.TargetUserId);
