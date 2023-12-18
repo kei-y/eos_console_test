@@ -32,5 +32,11 @@
     <ClInclude Include="eos_account.h">
       <Filter>ソース ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="my_eos.h">
+      <Filter>ソース ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="my_eos_p2p.h">
+      <Filter>ソース ファイル</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

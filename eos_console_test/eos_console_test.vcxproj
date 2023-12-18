@@ -140,6 +140,8 @@
     <ClInclude Include="eos_account.h" />
     <ClInclude Include="eos_error.h" />
     <ClInclude Include="eos_handle.h" />
+    <ClInclude Include="my_eos.h" />
+    <ClInclude Include="my_eos_p2p.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

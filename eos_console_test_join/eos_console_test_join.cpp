@@ -24,7 +24,7 @@ int main(int argc, const char* argv[])
     std::vector<std::shared_ptr<EOS::Lobby>> lobbies;
 
     // 反映されるまで少し時間がかかるようなので適当に待機します
-    EOS::WaitSignal(eos, 15 * 1000);
+    EOS::WaitSignal(eos, 10 * 1000);
 
     // 一番最新のロビーへ参加する
     puts("search 1");
@@ -49,7 +49,7 @@ int main(int argc, const char* argv[])
 
     puts("wait");
     // Ctrl+Cされるまで適当に待つ
-    EOS::WaitSignal(eos, 15 * 1000);
+    EOS::WaitSignal(eos, 45 * 1000);
 
     for (auto l : lobbies)
     {

@@ -32,5 +32,11 @@
     <ClInclude Include="..\eos_console_test\eos_account.h">
       <Filter>ソース ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="..\eos_console_test\my_eos.h">
+      <Filter>ソース ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="..\eos_console_test\my_eos_p2p.h">
+      <Filter>ソース ファイル</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

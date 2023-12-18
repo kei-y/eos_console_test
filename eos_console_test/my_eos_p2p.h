@@ -23,7 +23,6 @@
 
 class P2P
 {
-    eos::EpicAccount<EOS_ProductUserId>& m_local_user_id;
 
 public:
     class Link
@@ -33,15 +32,14 @@ public:
             INIT,       // 初期
             WAKEUP,     // 相手から受信できるまでダミーパケット送信
             WAKEUP_ACK, // 相手から受信できるまでACKダミーパケット送信
-            KEEPALIVE,  // 安定状態、必要であれば一定時間ごとに通信を行う
+            KEEPALIVE,  // 安定状態、状態の監視や定点動作があれば
         };
 
         P2P&                                m_p2p;
         eos::EpicAccount<EOS_ProductUserId> m_product_id;
         STATE                               m_state = STATE::INIT;
 
-        const static int32_t WAKE_INTERVAL      = 100; // Wakeを呼び出す頻度
-        const static int32_t KEEPALIVE_INTERVAL = 500; // keepaliveを行う頻度
+        const static int32_t WAKE_INTERVAL = 100; // Wakeを呼び出す頻度
 
         const static int32_t KEEPALIVE         = 5 * 1000;  // 最終的にタイムアウトする時間
         const static int32_t PREWAKE_KEEPALIVE = 20 * 1000; // Wake前のタイムアウト時間
@@ -51,6 +49,8 @@ public:
 
     public:
         Link(P2P& p2p, EOS_ProductUserId id) : m_p2p(p2p), m_product_id(id) {}
+
+        const eos::EpicAccount<EOS_ProductUserId>& GetProductUserId() const { return m_product_id; }
 
         /// @brief パケットなどが届いて通信状態が成立しているのを確認できたら常時呼び出す
         void Keepalive()
@@ -82,7 +82,7 @@ public:
 
                         m_p2p.Wake(m_product_id);
 
-                        if (m_p2p.GetEstablished(m_product_id) > 0)
+                        if (m_p2p.GetEstablished(m_product_id) >= ESTABLISHED_LEVEL::WAKEUP)
                         {
                             // 接続が確立したので、通信監視へ
                             m_state = STATE::WAKEUP_ACK;
@@ -104,7 +104,7 @@ public:
 
                         m_p2p.Wake(m_product_id, true);
 
-                        if (m_p2p.GetEstablished(m_product_id) > 1)
+                        if (m_p2p.GetEstablished(m_product_id) >= ESTABLISHED_LEVEL::ALREADY_WAKEUP)
                         {
                             // 接続が確立したので、通信監視へ
                             m_state = STATE::KEEPALIVE;
@@ -117,21 +117,7 @@ public:
                     assert(!IsTimeout(m_keepalive_old, KEEPALIVE));
                     break;
                 case STATE::KEEPALIVE:
-                    // 一定時間ごとに通信をおこなっておく
-                    // 相手側は通信がこなくなって一定時間すると切断処理を行うようにする
-                    if (IsTimeout(m_interval_old, KEEPALIVE_INTERVAL))
-                    {
-                        puts("STATE::KEEPALIVE");
-
-                        m_interval_old = std::chrono::system_clock::now();
-
-                        Head head = {};
-
-                        // ここまでくればレベルが下がっても問題はないし、
-                        // そもそも送る意味がないけれど、良い感じの実装もないのでてきとうにやっておく
-                        head.established_level = 10;
-                        m_p2p.Send(m_product_id, &head, sizeof(head));
-                    }
+                    // この状態は特にする処理はないので、必要に応じて監視などに利用する
 
                     // 切断判定などに利用する？
                     assert(!IsTimeout(m_keepalive_old, KEEPALIVE));
@@ -141,6 +127,14 @@ public:
     };
 
 private:
+    enum ESTABLISHED_LEVEL
+    {
+        NONE = -1,
+
+        WAKEUP         = 1,
+        ALREADY_WAKEUP = 2,
+    };
+
     /// @brief わかりやすく情報を付けるために、固定構造体を先頭に貼り付ける
     /// @note ※本来はもっと無駄を減らし効率よくやった方がよいです
     /// @note ビット単位でシリアライズをする、圧縮する、といった感じです
@@ -148,11 +142,17 @@ private:
     {
         char data[4] = {0};
 
-        char established_level = -1;
+        ESTABLISHED_LEVEL established_level = ESTABLISHED_LEVEL::NONE;
     };
 
+    const static int32_t KEEPALIVE_INTERVAL = 500; // keepaliveを行う頻度
+
+    eos::EpicAccount<EOS_ProductUserId>& m_local_user_id;
+
+    std::chrono::system_clock::time_point m_keepalive_interval_old;
+
     std::unordered_map<std::string, std::shared_ptr<Link>> m_links;
-    std::unordered_map<std::string, char>                  m_activates;
+    std::unordered_map<std::string, ESTABLISHED_LEVEL>     m_activates; // 接続状態のレベルを保持、
 
     std::unordered_map<std::string, std::vector<char>> m_received;
 
@@ -192,27 +192,29 @@ private:
             }
             assert(r == EOS_EResult::EOS_Success);
 
-            // Wake用の情報を片付ける
-            // established_levelでwakeの進行状態を進行管理する
-
             const Head* head = (const Head*)data.data();
 
             const auto remote_user_id = eos::EpicAccount<EOS_ProductUserId>(received_id).ToString();
 
             if (auto p = GetLink(remote_user_id))
             {
+                // 通信が届いたので延命させる
                 p->Keepalive();
             }
-            // 毎回送るなどだいぶ手抜きだが、送られてきた接続状態で相手のP2P状況を保存し、リンクの方へ伝達できればなんでもよい
-            // 当然通信は前後する可能性もあるので、レベルが小さくならないようにしないといけない、などもある
-            m_activates[remote_user_id] = head->established_level;
+            if (head->established_level != ESTABLISHED_LEVEL::NONE)
+            {
+                // wakeupのシグナルを毎回送るなどだいぶ手抜きだが、通信があったことをリンクの方へ伝達できればなんでもよい
+                // 当然通信は前後する可能性もあるので、レベルが小さくならないようにしないといけない
+                m_activates[remote_user_id] = head->established_level;
+            }
 
-            // 適当に格納しておく
+            // このループ内で複雑な処理を動かしたくないので、
+            // 別バッファへコピーし、通信結果の反映は別のルーチンで処理するようにします
             auto& receiver = m_received[remote_user_id];
             receiver.resize(byte_written);
             memcpy(receiver.data(), data.data(), byte_written);
 
-            puts(std::format("received {}", byte_written).c_str());
+            puts(std::format("received {}:{}", remote_user_id, byte_written).c_str());
         }
     }
 
@@ -227,12 +229,30 @@ private:
         return -1;
     }
 
+    /// @brief 指定したIDのリンクを取得する
+    std::shared_ptr<Link> GetLink(EOS_ProductUserId id)
+    {
+        const auto _id = eos::Account<EOS_ProductUserId>::ToString(id);
+        return GetLink(_id);
+    }
+    std::shared_ptr<Link> GetLink(const std::string& id)
+    {
+        auto iter = m_links.find(id);
+        if (m_links.end() == iter)
+        {
+            return std::shared_ptr<Link>();
+        }
+        return iter->second;
+    }
+
 public:
     P2P(eos::EpicAccount<EOS_ProductUserId>& local_user_id, EOS_HP2P p2p, const char* sockname)
         : m_local_user_id(local_user_id), m_p2p(p2p)
     {
         m_socket_id.ApiVersion = EOS_P2P_SOCKETID_API_LATEST;
         strcpy_s(m_socket_id.SocketName, sockname);
+
+        m_keepalive_interval_old = std::chrono::system_clock::now();
     }
 
     /// @brief 初回接続確立までのダミーパケット
@@ -258,7 +278,7 @@ public:
 
         Head head = {};
 
-        head.established_level = is_ack ? 2 : 1;
+        head.established_level = is_ack ? ESTABLISHED_LEVEL::ALREADY_WAKEUP : ESTABLISHED_LEVEL::WAKEUP;
         Send(user_id, &head, sizeof(head), EOS_EPacketReliability::EOS_PR_ReliableUnordered);
     }
 
@@ -293,33 +313,22 @@ public:
         }
     }
 
+    /// @brief ロビーから参加通知があった場合に呼び出される
     void OnJoined(EOS_ProductUserId id)
     {
         const auto _id = eos::Account<EOS_ProductUserId>::ToString(id);
 
         m_links[_id] = std::make_shared<Link>(*this, id);
     }
+    /// @brief ロビーからいなくなったときに呼び出される
     void OnLeft(EOS_ProductUserId id)
     {
         const auto _id = eos::Account<EOS_ProductUserId>::ToString(id);
+
         m_links.erase(_id);
     }
 
-    std::shared_ptr<Link> GetLink(EOS_ProductUserId id)
-    {
-        const auto _id = eos::Account<EOS_ProductUserId>::ToString(id);
-        return GetLink(_id);
-    }
-    std::shared_ptr<Link> GetLink(const std::string& id)
-    {
-        auto iter = m_links.find(id);
-        if (m_links.end() == iter)
-        {
-            return std::shared_ptr<Link>();
-        }
-        return iter->second;
-    }
-
+    /// @brief 定期更新処理
     void Update()
     {
         UpdateReceive();
@@ -331,5 +340,44 @@ public:
         {
             l.second->Update();
         }
+
+        // 開通確認が終わったユーザーと一定時間ごとに通信をおこなっておく
+        // 通信がこなくなって一定時間すると切断処理を行うようにする
+        // レシーブさえしていれば接続中と見なせばよいと思いますので、、
+        // 常時通信しているようなゲームであれば専用のkeepalive処理は不要です
+        if (IsTimeout(m_keepalive_interval_old, KEEPALIVE_INTERVAL))
+        {
+            m_keepalive_interval_old = std::chrono::system_clock::now();
+
+            // このプロジェクトではパケットに必ずHeadをつけておく必要があるのでHeadを送っています
+            // 特に良い方法ではないので、本番ではなるべく入れなくて良い方法で実装したほうがよいです
+            Head head;
+
+            const auto remote_users = GetActiveRemoteUsers();
+            if (!remote_users.empty())
+            {
+                puts("KEEPALIVE(POST)");
+            }
+            for (auto id : remote_users)
+            {
+                Send(id, &head, sizeof(head));
+            }
+        }
+    }
+
+    /// @brief P2P接続中の全ProductUserIdを取得する
+    std::vector<eos::EpicAccount<EOS_ProductUserId>> GetActiveRemoteUsers()
+    {
+        std::vector<eos::EpicAccount<EOS_ProductUserId>> r;
+        for (auto& l : m_links)
+        {
+            // 相互接続が確認できたものだけを返す
+            if (GetEstablished(l.second->GetProductUserId()) >= ESTABLISHED_LEVEL::ALREADY_WAKEUP)
+            {
+                r.push_back(l.second->GetProductUserId());
+            }
+        }
+
+        return r;
     }
 };
