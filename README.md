@@ -1,4 +1,4 @@
-[eos_console_test](https://github.com/y-horiuchi-snd/eos_console_test)に、P2P用のコードを実装し、簡単なP2P通信をしてみよう、といった趣旨のforkです
+[eos_console_test](https://github.com/y-horiuchi-snd/eos_console_test)にP2P用のコードを実装し、簡単なP2P通信をしてみよう、といった趣旨のforkです
 
 - [はじめに](#はじめに)
 - [オリジナルからの変更点](#オリジナルからの変更点)
@@ -97,6 +97,10 @@
   ![logged in](a/0.png "２名ログインした状態")
 
   これで準備は完了となります
+
+# 事前準備
+
+  TODO DevPortalで参加側もユーザーを登録しておく必要があることの図解
 
 # 動作内容
 
