@@ -91,7 +91,7 @@ public:
                         }
                     }
 
-                    // ちょっと長めの判定がよい感じ？
+                    // タイムアウト判定、ここはちょっと長めの判定をしたほうがいいのかもしれません
                     assert(!IsTimeout(m_keepalive_old, PREWAKE_KEEPALIVE));
                     break;
                 case STATE::WAKEUP_ACK:
@@ -113,13 +113,13 @@ public:
                         }
                     }
 
-                    // 切断判定などに利用する？
+                    // タイムアウト判定
                     assert(!IsTimeout(m_keepalive_old, KEEPALIVE));
                     break;
                 case STATE::KEEPALIVE:
-                    // この状態は特にする処理はないので、必要に応じて監視などに利用する
+                    // この状態はやることがとくにないので、必要に応じて監視などに利用する
 
-                    // 切断判定などに利用する？
+                    // タイムアウト判定
                     assert(!IsTimeout(m_keepalive_old, KEEPALIVE));
                     break;
             }
@@ -145,7 +145,7 @@ private:
         ESTABLISHED_LEVEL established_level = ESTABLISHED_LEVEL::NONE;
     };
 
-    const static int32_t KEEPALIVE_INTERVAL = 500; // keepaliveを行う頻度
+    const static int32_t KEEPALIVE_INTERVAL = 5000; // keepaliveを行う頻度
 
     eos::EpicAccount<EOS_ProductUserId>& m_local_user_id;
 
@@ -209,7 +209,7 @@ private:
             }
 
             // このループ内で複雑な処理を動かしたくないので、
-            // 別バッファへコピーし、通信結果の反映は別のルーチンで処理するようにします
+            // 別バッファへコピーし、通信結果の反映は別のルーチンで処理するようにコピーしてます
             auto& receiver = m_received[remote_user_id];
             receiver.resize(byte_written);
             memcpy(receiver.data(), data.data(), byte_written);
