@@ -123,7 +123,7 @@
 
   P2P::Linkの定点動作の役割は主に２つあり、
 
-  - ESTABLISHED_LEVEL::WAKEUP -> ESTABLISHED_LEVEL::ALREADY_WAKEUP という通信を相互に行う、
+  - 初動時にESTABLISHED_LEVEL::WAKEUP -> ESTABLISHED_LEVEL::ALREADY_WAKEUP という通信を相互に行う、
 
   - 通信確認が終わったら待機状態に入る
   
