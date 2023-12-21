@@ -15,7 +15,6 @@
 - [動作内容](#動作内容)
   - [マッチング主催者側（eos\_console\_test）](#マッチング主催者側eos_console_test)
   - [マッチング参加者側（eos\_console\_test\_join）](#マッチング参加者側eos_console_test_join)
-- [最後に](#最後に)
 
 # Epic Online Servicesって何？
 
