@@ -47,8 +47,23 @@ public:
         std::chrono::system_clock::time_point m_interval_old;
         std::chrono::system_clock::time_point m_keepalive_old;
 
+        /// @brief 接続許可を設定します
+        void AcceptConnection()
+        {
+            EOS_P2P_AcceptConnectionOptions options;
+            options.ApiVersion   = EOS_P2P_ACCEPTCONNECTION_API_LATEST;
+            options.LocalUserId  = m_p2p.m_local_user_id;
+            options.RemoteUserId = m_product_id;
+
+            options.SocketId = &m_p2p.m_socket_id;
+
+            eos::Error r = EOS_P2P_AcceptConnection(m_p2p.m_p2p, &options);
+
+            assert(r.IsSuccess());
+        }
+
     public:
-        Link(P2P& p2p, EOS_ProductUserId id) : m_p2p(p2p), m_product_id(id) {}
+        Link(P2P& p2p, EOS_ProductUserId id) : m_p2p(p2p), m_product_id(id) { AcceptConnection(); }
 
         const eos::EpicAccount<EOS_ProductUserId>& GetProductUserId() const { return m_product_id; }
 
@@ -142,6 +157,7 @@ private:
     {
         char data[4] = {0};
 
+        int               m_no              = 0;
         ESTABLISHED_LEVEL established_level = ESTABLISHED_LEVEL::NONE;
     };
 
@@ -214,7 +230,7 @@ private:
             receiver.resize(byte_written);
             memcpy(receiver.data(), data.data(), byte_written);
 
-            puts(std::format("received {}:{}", remote_user_id, byte_written).c_str());
+            puts(std::format("received {}:{}:{}", remote_user_id, head->m_no, byte_written).c_str());
         }
     }
 
@@ -255,31 +271,21 @@ public:
         m_keepalive_interval_old = std::chrono::system_clock::now();
     }
 
-    /// @brief 初回接続確立までのダミーパケット
+    int m_packet_no = 0;
+
+    /// @brief 初回接続確立までのダミーパケットを送信する
     /// @param user_id 送信先
     /// @param is_ack 最初はfalse、trueには相手からの応答があった後に切り替える
     void Wake(EOS_ProductUserId user_id, bool is_ack = false)
     {
         puts(__func__);
 
-        // 接続許可を出しておく
-        {
-            EOS_P2P_AcceptConnectionOptions options;
-            options.ApiVersion   = EOS_P2P_ACCEPTCONNECTION_API_LATEST;
-            options.LocalUserId  = m_local_user_id;
-            options.RemoteUserId = user_id;
-
-            options.SocketId = &m_socket_id;
-
-            eos::Error r = EOS_P2P_AcceptConnection(m_p2p, &options);
-
-            assert(r.IsSuccess());
-        }
-
         Head head = {};
 
+        head.m_no = (++m_packet_no);
+
         head.established_level = is_ack ? ESTABLISHED_LEVEL::ALREADY_WAKEUP : ESTABLISHED_LEVEL::WAKEUP;
-        Send(user_id, &head, sizeof(head), EOS_EPacketReliability::EOS_PR_ReliableUnordered);
+        Send(user_id, &head, sizeof(head), EOS_EPacketReliability::EOS_PR_ReliableOrdered);
     }
 
     /// @brief user_id に対してパケットを送信する
@@ -294,23 +300,21 @@ public:
             return;
         }
 
-        {
-            EOS_P2P_SendPacketOptions options;
+        EOS_P2P_SendPacketOptions options = {};
 
-            options.ApiVersion            = EOS_P2P_SENDPACKET_API_LATEST;
-            options.LocalUserId           = m_local_user_id;
-            options.RemoteUserId          = user_id;
-            options.SocketId              = &m_socket_id;
-            options.bAllowDelayedDelivery = EOS_FALSE;
-            options.Channel               = 0;
-            options.Reliability           = reliability;
+        options.ApiVersion            = EOS_P2P_SENDPACKET_API_LATEST;
+        options.LocalUserId           = m_local_user_id;
+        options.RemoteUserId          = user_id;
+        options.SocketId              = &m_socket_id;
+        options.bAllowDelayedDelivery = EOS_FALSE;
+        options.Channel               = 0;
+        options.Reliability           = reliability;
 
-            options.DataLengthBytes = len;
-            options.Data            = mem;
+        options.DataLengthBytes = len;
+        options.Data            = mem;
 
-            eos::Error r = EOS_P2P_SendPacket(m_p2p, &options);
-            assert(r.IsSuccess());
-        }
+        eos::Error r = EOS_P2P_SendPacket(m_p2p, &options);
+        assert(r.IsSuccess());
     }
 
     /// @brief ロビーから参加通知があった場合に呼び出される
@@ -352,6 +356,8 @@ public:
             // このプロジェクトではパケットに必ずHeadをつけておく必要があるのでHeadを送っています
             // 特に良い方法ではないので、本番ではなるべく入れなくて良い方法で実装したほうがよいです
             Head head;
+
+            head.m_no = (++m_packet_no);
 
             const auto remote_users = GetActiveRemoteUsers();
             if (!remote_users.empty())
