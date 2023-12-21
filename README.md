@@ -139,6 +139,92 @@
 
   接続が確立した後は、定期的に通信を行い接続が継続していることを確認しておきます
 
+<details><summary>動作ログ（折りたたまれています）</summary><div>
+
+```text
+Initialize
+Authorize
+Connect
+LobbyCreate
+LobbySetAttributes
+wait(break ctrl+c)
+EOS_LMS_JOINED
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+Keepalive
+received 00022d5ff:12:12
+Keepalive
+received 00022d5ff:13:12
+Keepalive
+received 00022d5ff:14:12
+STATE::WAKEUP
+Wake
+Keepalive
+received 00022d5ff:15:12
+STATE::WAKEUP_ACK
+Wake
+Keepalive
+received 00022d5ff:16:12
+STATE::WAKEUP_ACK
+Wake
+Keepalive
+received 00022d5ff:17:12
+KEEPALIVE(POST)
+Keepalive
+received 00022d5ff:18:12
+KEEPALIVE(POST)
+Keepalive
+received 00022d5ff:19:12
+KEEPALIVE(POST)
+Keepalive
+received 00022d5ff:20:12
+KEEPALIVE(POST)
+Keepalive
+received 00022d5ff:21:12
+KEEPALIVE(POST)
+Keepalive
+received 00022d5ff:22:12
+KEEPALIVE(POST)
+Keepalive
+received 00022d5ff:23:12
+KEEPALIVE(POST)
+Keepalive
+received 00022d5ff:24:12
+KEEPALIVE(POST)
+Keepalive
+received 00022d5ff:25:12
+EOS_LMS_LEFT
+```
+
+</div></details>
+
+
 - マッチング参加者側（eos_console_test_join）
 
   EOSを初期化、DevAuthTool経由で"JOIN"という名前で認証します
@@ -152,3 +238,87 @@
   この後は、ホストでの動作とほぼ同じ流れでの処理が行われます
 
   双方で、EOS_P2P_AcceptConnectionを行い、相互に通信を開始することで相互通信が確立できます。
+
+<details><summary>動作ログ（折りたたまれています）</summary><div>
+
+```text
+  Initialize
+Authorize
+Connect
+wait(10000ms)(break ctrl+c)
+search 1
+index:0[
+ NOW 1703125307976
+ TEST 1
+]
+LobbyJoin
+wait
+wait(45000ms)(break ctrl+c)
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+STATE::WAKEUP
+Wake
+Keepalive
+received 00024b70:17:12
+STATE::WAKEUP
+Wake
+Keepalive
+received 00024b70:18:12
+STATE::WAKEUP_ACK
+Wake
+Keepalive
+received 00024b70:19:12
+KEEPALIVE(POST)
+Keepalive
+received 00024b70:20:12
+KEEPALIVE(POST)
+Keepalive
+received 00024b70:21:12
+KEEPALIVE(POST)
+Keepalive
+received 00024b70:22:12
+KEEPALIVE(POST)
+Keepalive
+received 00024b70:23:12
+KEEPALIVE(POST)
+Keepalive
+received 00024b70:24:12
+KEEPALIVE(POST)
+Keepalive
+received 00024b70:25:12
+KEEPALIVE(POST)
+Keepalive
+received 00024b70:26:12
+KEEPALIVE(POST)
+Keepalive
+received 00024b70:27:12
+LobbyLeave
+KEEPALIVE(POST)
+Hello World!
+```
+
+</div></details>
