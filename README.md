@@ -138,15 +138,15 @@
 
   ログインを選び、Epicアカウントにログインし、「HOSTING」と名前を付けます
 
-![0.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/208256/fc1841ef-dd19-f4c6-c31b-72371041a10c.png)
+![0.png](画像/100.png)
 
   再びログインを選び、Epicアカウントにログインし、「JOIN」と名前を付けます
 
-![1.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/208256/58178483-5a61-bdcb-0f82-60f7ce8275c3.png)
+![1.png](画像/101.png)
 
   両方ログインが完了すると、ツールの左側が↓のようになります
 
-![2.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/208256/90735f52-97da-c275-5e49-b9a02bf6359f.png)
+![2.png](画像/102.png)
 
   これでDevAuthToolの準備は完了となります
 
@@ -156,11 +156,11 @@
 
   ソリューションエクスプローラーのソリューションを右クリックし、
 
-  ![10.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/208256/9eb56cab-6aea-3ef1-2e8e-f71e00f73bb7.png)
+  ![10.png](画像/110.png)
 
   「スタートアッププロジェクトの構成」を選択します
 
-![11.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/208256/492f9cd2-058c-2b73-e1d5-7284c589479b.png)
+![11.png](画像/111.png)
 
   「スタートアッププロジェクト」の編集が出来るプロパティダイアログへ飛ばされるので、
 
