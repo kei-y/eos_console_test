@@ -1,7 +1,8 @@
-[eos_console_test](https://github.com/y-horiuchi-snd/eos_console_test)のコード元に、[Epic Online Serivces](https://dev.epicgames.com/ja/services)の[P2P機能](https://dev.epicgames.com/docs/ja/api-ref/interfaces/p-2-p)を使って簡単なP2P通信をしてみよう、といった趣旨の記事です
+VisualStudioとEOS-SDKを使った[eos_console_test](https://github.com/y-horiuchi-snd/eos_console_test)のC++コードを元に、[Epic Online Serivces](https://dev.epicgames.com/ja/services)の[P2P機能](https://dev.epicgames.com/docs/ja/api-ref/interfaces/p-2-p)を使って簡単なP2P通信をしてみよう、といった趣旨のforkリポジトリです
 
 - [Epic Online Servicesって何？](#epic-online-servicesって何)
 - [はじめに](#はじめに)
+- [ソースコードはこちら](#ソースコードはこちら)
 - [ビルド環境](#ビルド環境)
 - [ビルド方法](#ビルド方法)
 - [オリジナルからの変更点](#オリジナルからの変更点)
@@ -15,46 +16,45 @@
 - [動作内容](#動作内容)
   - [マッチング主催者側（eos\_console\_test）](#マッチング主催者側eos_console_test)
   - [マッチング参加者側（eos\_console\_test\_join）](#マッチング参加者側eos_console_test_join)
+- [最後に](#最後に)
 
 # Epic Online Servicesって何？
 
   [Epic Games](https://ja.wikipedia.org/wiki/Epic_Games)が提供しているオンラインサービスです。ゲームやアプリケーションに組み込むことでオンラインゲームの開発が出来るミドルウエアで、現時点ではコンソール機を含み完全無償で提供されています。
 
 [公式ドキュメント](https://dev.epicgames.com/docs/)
+
 [【CEDEC2020】無料でオンラインゲーム開発 ～EOS を利用したゲーム開発～](https://www.youtube.com/watch?v=zm1y6azGmSk)
+
 [Epic Online Services でできること](https://www.youtube.com/watch?v=ASfE0T_-cmI)
   
 
 # はじめに
   オリジナルのeos_console_testは、とある勉強会のスライド内容補強のために用意したもので、
+  EOS-SDKのみを利用し、なるべく構造が簡単になるよう面倒そうな処理はなるべく省き、
+  [Epic Online Serivces](https://dev.epicgames.com/ja/services)の[ロビー機能](https://dev.epicgames.com/docs/ja/api-ref/interfaces/lobby)が最低限確認できる、といった目的のために作成したものです。
 
-  なるべく構造を簡単になるよう、面倒そうな処理はなるべく省き、
-
-  [Epic Online Serivces](https://dev.epicgames.com/ja/services)の[ロビー機能](https://dev.epicgames.com/docs/ja/api-ref/interfaces/lobby)が最低限確認できる、という状態を目的に作成したものです。
-
-  提供コードとしてはスライドの内容に沿ったものであったので、これで良かった、と思うのですが、
-
+  提供コードとしては趣旨に沿ったものであったので、これで良かった、と思うのですが、
   ロビーだけあってもしょうがないよなぁ、とも思うのでP2Pの部分も追加してみました。
-
   （~~許可をとるのがちょっと面倒だったため~~完全に業務外となっており、forkする形になっております）
   
-  DevAuthToolを前提で複数のアプリを立ち上げて自動的にログイン状態とし、
+-  DevAuthToolを前提で複数のアプリを立ち上げて自動的にログイン状態にする、
 
-  ロビーへの参加、
+-  ロビーへの参加を行う
 
-  簡単なP2P管理部分の実装
+-  簡単なP2P管理部分の実装を行う
 
   といった内容を追加したものです
 
-  動作させるにはマッチングホスト側と参加側で二名分、Epicアカウントが必要になりますので、事前に作成しておいてください、同じアカウントでマッチングを行うと正しく動作しません。
+  動作させるにはマッチングホスト側と参加側で二名分、Epicアカウントが必要になりますので、事前に作成しておいてください。両方とも同一のアカウントではマッチングが正しく動作しません。
 
 # ビルド環境
 
-  動作確認を行ったツール、SDKはこちらです
+  動作確認を行ったツール、SDKはこちらの環境を利用しました。
 
-  VisualStudio2022 17.8.2
+-  VisualStudio2022 17.8.2
   
-  EOS-SDK-27379709-v1.16.1
+-  EOS-SDK-27379709-v1.16.1
 
 # ビルド方法
 
@@ -65,42 +65,24 @@
 # オリジナルからの変更点
 
 - マッチングホスティング側と参加側でプロジェクトを分離
-
   異なる部分のみをif文で分岐させて、共通処理で動作させてもいいのですが、
-
   動作順序が追いかけづらくなってしまうので分離しました
-
   それぞれのプロジェクトのmain()が上から順に実行されるだけになっています。
 
-  相変わらず、EOS_Platform_Tickなどの定期呼び出し処理もその場で適当に呼び出していますが、
-
-  こちらはわかりやすく完全待機にしたいという目的で現状実装にしているだけで、
-
-  本来は1フレームに一度呼び出すような処理が望ましいです
-
+---
 - デバッグ時はDevAuthTool前提としてデバッグ中は認証を自動化
-
   ログイン大変なので、DevAuthToolで事前にログインしたものを固定の名前で使います。
-
   DevAuthToolのポートは8080で、マッチングホスト側はHOSTING、参加側はJOINという名前で事前に登録しておいてください
-
-  （DevAuthToolはそろそろログイン状況を保存する機能を実装しても怒られないのではないか、と思います！）
-
+---
 - P2P処理の実装
-
-  ロビーからのEOS_LMS_JOINEDなどを利用して
-
-  P2Pのマッチング状態を作成します
-
-  初期化、通信許可、開通のためのパケット送受信と相互確認、接続後は定期的に通信を行う、
-  
-  といった流れが簡易に実装されています
+  ロビーからのEOS_LMS_JOINEDなどを利用してP2Pのマッチング状態を作成します
+  初期化、通信許可、開通のためのパケット送受信と相互確認、接続後は定期的に通信を行う、といった流れが簡易に実装されています
 
 # DevAuthToolの使い方
 
 ## なぜ使うのか
 
-  ログイン状態を保留できるようになるため、デバッグ実行時のログイン認証を大幅に簡略化できるようになります
+  ログイン状態を別のプログラムで保留できるようになるため、一度ログインした状態を作ってしまえばデバッグ実行時のログイン認証を大幅に簡略化できるようになります
 
 ## マニュアル
 
@@ -109,33 +91,21 @@
 ## 概要
 
   DevAuthToolはSDK内に入っています、
-
   SDK\Tools\EOS_DevAuthTool-win32-x64-1.1.0.zip
-
   が該当アプリケーションです
 
   DevAuthToolはEpicアカウントのログイン処理を代行（というか維持）してくれるツールです
-
-  ゲームを起動するたびにログインするのは非常に大変なので、
-
-  DevAuthToolでログインしておいて、維持されているトークンをかすめ取り、
-
-  そのトークンを使ってログインし自分のアプリケーションのデバッグを行う、といったツールになっていると思われます
+  （ゲームを起動するたびにログインするのは非常に面倒なので、現時点で大変に便利なのですが、保存機能などあるともっと喜ばれると思います）
 
 ## できること
 
-  DevAuthToolを起動し、デバッグで使用するユーザーでログインし、そのユーザーに名前を付けることで、
-
-  EOS_LCT_DeveloperとDevAuthToolが起動しているIPとポート、ユーザーに付けた名前、を使って二段階認証などをすっとばしてデバッグ出来るようになります
-
+  DevAuthToolで事前準備を行い、EOS_LCT_Developerを指定して認証を行うと、二段階認証などをすっとばしてデバッグ出来るようになります
   ビルドやデバッグ機材固有の情報をキーにすれば、入力をすべて飛ばしてデバッグを行うことも出来るようになります
 
 ## 今回の使い方
 
   DevAuthToolを起動し、ポート番号を8080に設定します
-
   登録を二つ作っていますが、すべて異なったEpic アカウントを用意し、それぞれログインする必要があります。
-
   ログインを選び、Epicアカウントにログインし、「HOSTING」と名前を付けます
 
 ![0.png](画像/100.png)
@@ -163,22 +133,14 @@
 ![11.png](画像/111.png)
 
   「スタートアッププロジェクト」の編集が出来るプロパティダイアログへ飛ばされるので、
-
   「マルチスタートアッププロジェクト」を動作するように選択し、
-
   ２つあるプロジェクトのアクションを両方とも「開始」に設定し、「OK」を押します
-
   これでデバッグ実行時に２つのアプリケーションが同時にデバッガにアタッチされた状態で立ち上がります。
-
   （両方ともデバッグした状態での実行できるようになります）
 
-![12.png](https://qiita-image-store.s3.ap-northeast-1.amazonaws.com/0/208256/411fce5e-c0ab-be95-970f-9f94831ca721.png)
+![12.png](画像/112.png)
 
-  コードに小細工をしデバッガに接続されている場合は、
-
-  DevAuthToolを使い固有名で自動的に認証を動作するようにしてあるため、
-
-  不要な場合は、毎度ログインするようにする等、良い感じに対処してください。
+  コードに小細工をし、デバッガに接続されている場合はDevAuthToolを使い固有名で自動的に認証を動作するようにしてあるため、この動作が不要な場合は良い感じに対処してください。
 
 
 # 動作内容
@@ -209,12 +171,9 @@ void LobbySetAttributes(std::shared_ptr<Lobby> p, int number, int test_value)
 </div></details>
 
   これは、デバッガで強制的に終了するなどでロビーをつぶした場合、サーバに残り続けてしまうという問題対策も兼ねています
-
   （一番最新のものが識別できるので、デバッグ中に間違って参加しないようにできます）
 
-  ロビーでは誰かが参加してくると、EOS_ELobbyMemberStatus::EOS_LMS_JOINEDが発火し、
-
-  P2P::OnJoined() へ参加者情報が届きます
+  ロビーでは誰かが参加してくると、EOS_ELobbyMemberStatus::EOS_LMS_JOINEDが発火し、P2P::OnJoined() へ参加者情報が届きます
 
 <details><summary>コード（折りたたまれています）</summary><div>
 
@@ -359,18 +318,12 @@ void P2P::Link::Update()
 </div></details>
 
   P2P::Linkの定点動作の役割は主に２つあり、
-
   - 初動時にESTABLISHED_LEVEL::WAKEUP -> ESTABLISHED_LEVEL::ALREADY_WAKEUP という通信を相互に行う、
-
   - 通信確認が終わったら待機状態に入る
-  
   のふたつを行います（Link::Update()の部分になります）
 
-  最初に相互通信の確立確認を行っているのは、
-
-  相手側通信を受け入れるまで通信が行われず、
-  
-  到達したか不明瞭な状態となってしまいます、これを防ぐ目的です
+  最初に相互通信の確立確認を行っているのは、相手側が通信を受け入れるまで通信が行われず、
+  到達したか不明瞭な状態となってしまうため、これを防ぐ目的です
 
   このタイミングはRUDPでも届かないようなので、儀式だと思ってやっておきましょう。
 
@@ -511,10 +464,33 @@ EOS_LMS_LEFT
 ## マッチング参加者側（eos_console_test_join）
 
   EOSを初期化、DevAuthTool経由で"JOIN"という名前で認証します
-
   次に参加するロビーを探すのですが、EOS_EComparisonOp::EOS_CO_DISTANCEを使い、
-  
   一番新しいもの順にソートして、0番目のロビーへ参加するようにしてあります、
+
+<details><summary>コード（折りたたまれています）</summary><div>
+
+```C++
+{
+    auto search = eos.LobbySearchCreate(5);
+
+    EOS_Lobby_AttributeData attr;
+
+    search->AddParameter(EOS::MakeAttribute(attr, "now", std::numeric_limits<int64_t>::max()),
+                         EOS_EComparisonOp::EOS_CO_DISTANCE);
+    eos.LobbySearchExecute(search);
+
+    search->ResultDump();
+
+    assert(0 < search->GetSearchResultCount());
+
+    eos::Handle<EOS_HLobbyDetails> details_handle;
+    search->GetDetail(0, details_handle);
+
+    lobbies.push_back(eos.LobbyJoin(details_handle));
+}
+```
+
+</div></details>
 
   参加時にすでに参加済みのユーザーに対して P2P::OnJoined() を行い、「P2P::Link」を作成します
 
@@ -575,8 +551,7 @@ Lobby::Lobby() {
 
 </div></details>
 
-  この後は、ホストでの動作とほぼ同じ流れでの処理が行われます
-
+  この後は、ホストの動作とほぼ同じ流れでの処理が行われます
   双方で、EOS_P2P_AcceptConnectionを行い、相互に通信を開始することで相互通信が確立できます。
 
 <details><summary>参加側の動作ログ（折りたたまれています）</summary><div>
@@ -662,3 +637,4 @@ Hello World!
 ```
 
 </div></details>
+
