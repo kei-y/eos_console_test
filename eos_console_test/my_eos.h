@@ -63,6 +63,10 @@ public:
 
             eos.Update();
         }
+
+        SetConsoleCtrlHandler(nullptr, FALSE);
+
+        g_sleep.Release();
     }
 
 public:
